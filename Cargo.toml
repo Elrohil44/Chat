@@ -3,4 +3,8 @@ name = "chat"
 version = "0.1.0"
 authors = ["elrohil <wieslaw.stanek@spinney.io>"]
 
+[[bin]]
+name = "server"
+path = "src/server/main.rs"
+
 [dependencies]
