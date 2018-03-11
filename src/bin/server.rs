@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::process::exit;
 use std::sync::Arc;
+use std::net::SocketAddr;
 
 static SOCKET_ADDRESS: &'static str = "127.0.0.1:12345";
 
@@ -19,23 +20,23 @@ fn main() {
     let _ = udp_socket.join();
 }
 
-fn handle_client(mut stream: TcpStream, clients: Arc<Mutex<HashMap<String, TcpStream>>>) {
-    println!("New client");
+fn handle_client(mut stream: TcpStream, clients: Arc<Mutex<HashMap<SocketAddr, TcpStream>>>) {
+    println!("New client from: {}",  stream.peer_addr().unwrap());
     let mut buf = [0; 1024];
+    {
+        let mut clients_locked = clients.lock().unwrap();
+        (*clients_locked).insert(stream.peer_addr().unwrap(), stream.try_clone().unwrap());
+    }
     loop {
         match stream.read(&mut buf) {
             Ok(size) => {
                 if size > 0 {
                     match String::from_utf8(buf[0..size].to_vec()) {
                         Ok(str) => {
-                            println!("Received TCP message: \"{}\", from {}", str, stream
-                                .peer_addr()
-                                .unwrap());
                             let mut clients_locked = clients.lock().unwrap();
-                            (*clients_locked).insert(str.clone(), stream.try_clone().unwrap());
-                            for (_, s) in (*clients_locked).iter_mut() {
-                                println!("{}", s.peer_addr().expect("<Error>"));
-                                if stream.peer_addr().unwrap() != s.peer_addr().expect("<Error>") {
+                            for (address, s) in (*clients_locked).iter_mut() {
+                                println!("{}", s.peer_addr().unwrap());
+                                if stream.peer_addr().unwrap() != *address {
                                    let _ = (*s).write_fmt(format_args!("{}: {}", stream.peer_addr().unwrap(), str));
                                 }
                             }
@@ -43,6 +44,9 @@ fn handle_client(mut stream: TcpStream, clients: Arc<Mutex<HashMap<String, TcpSt
                         Err(_) => println!("Error casting to string")
                     }
                 } else {
+                    println!("{} disconnected", stream.peer_addr().unwrap());
+                    let mut clients_locked = clients.lock().unwrap();
+                    (*clients_locked).remove(&stream.peer_addr().unwrap());
                     break;
                 }
             },
@@ -52,7 +56,7 @@ fn handle_client(mut stream: TcpStream, clients: Arc<Mutex<HashMap<String, TcpSt
     }
 }
 
-fn tcp_listener(clients: Arc<Mutex<HashMap<String, TcpStream>>>) {
+fn tcp_listener(clients: Arc<Mutex<HashMap<SocketAddr, TcpStream>>>) {
     match TcpListener::bind(SOCKET_ADDRESS) {
         Ok(listener) => {
             for stream in listener.incoming() {
@@ -72,7 +76,7 @@ fn tcp_listener(clients: Arc<Mutex<HashMap<String, TcpStream>>>) {
     }
 }
 
-fn udp_socket(clients: Arc<Mutex<HashMap<String, TcpStream>>>) {
+fn udp_socket(clients: Arc<Mutex<HashMap<SocketAddr, TcpStream>>>) {
     match UdpSocket::bind(SOCKET_ADDRESS) {
         Ok(socket) => {
             let mut buf = [0; 1024];
@@ -84,8 +88,8 @@ fn udp_socket(clients: Arc<Mutex<HashMap<String, TcpStream>>>) {
                                 println!("Received UDP message: \"{}\", from {}", str, src);
                                 let mut clients_locked = clients.lock().unwrap();
                                 for (_, s) in &(*clients_locked) {
-                                    println!("{}", s.peer_addr().expect("<Error>"));
-                                    if src != s.peer_addr().expect("<Error>") {
+                                    println!("{}", s.peer_addr().unwrap());
+                                    if src != s.peer_addr().unwrap() {
                                         let _ = socket.send_to(format!("{}: {}", src, str).as_bytes(), s.peer_addr().unwrap());
                                     }
                                 }
